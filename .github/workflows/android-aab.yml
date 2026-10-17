@@ -288,34 +288,90 @@ jobs:
           print("Android notification compatibility patch applied to",changed,"HTML file(s)")
           PY
 
-      - name: Add visible backup import and restore controls
+      - name: Repair backup import without corrupting the HTML page
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           root=Path("android-source")
+          candidates=list(root.rglob("app/src/main/assets/**/*.html"))
+          if not candidates:
+              candidates=[p for p in root.rglob("*.html") if "build" not in p.parts]
           target=None
-          for p in root.rglob("*.html"):
-              if "build" in p.parts:
-                  continue
-              s=p.read_text(errors="replace")
-              if "function restore(file)" in s or "async function restore(file)" in s:
+          for p in candidates:
+              s=p.read_text(encoding="utf-8",errors="strict")
+              if "async function restore(file)" in s or "function restore(file)" in s:
                   target=(p,s)
                   break
           if target is None:
               raise SystemExit("No restore(file) function found in app HTML")
           p,s=target
-          if 'id="edgevault-import-backup"' not in s:
-              addon='''<div id="edgevault-import-backup" style="position:fixed;right:14px;bottom:84px;z-index:99999"><button type="button" id="edgevault-import-backup-btn" style="background:#d9aa43;color:#111;border:0;border-radius:12px;padding:12px 16px;font-weight:700;box-shadow:0 3px 14px #0005">Import / Restore Backup</button><input id="edgevault-import-backup-file" type="file" accept=".json,application/json" hidden></div><script>(function(){const b=document.getElementById("edgevault-import-backup-btn"),f=document.getElementById("edgevault-import-backup-file");if(b&&f){b.addEventListener("click",()=>f.click());f.addEventListener("change",async function(){const file=this.files&&this.files[0];if(file){try{await restore(file)}catch(e){console.error(e);alert("Could not restore this backup file.")}finally{this.value=""}}})}})();</script>'''
-              if "</body>" not in s:
-                  raise SystemExit("Could not find HTML body close tag in "+str(p))
-              s=s.replace("</body>",addon+"</body>",1)
-              p.write_text(s)
-          s=p.read_text(errors="replace")
-          if 'id="edgevault-import-backup-btn"' not in s or 'id="edgevault-import-backup-file"' not in s:
-              raise SystemExit("Import / Restore button failed verification in "+str(p))
-          print("Added visible Import / Restore Backup button to",p)
+
+          # Parse the app's own exported CSV format (including quoted commas/newlines).
+          helper=r'''function edgeVaultParseCSV(raw){
+          const text=String(raw||'').replace(/^\\uFEFF/,'');
+          const rows=[];let row=[],field='',quoted=false;
+          for(let i=0;i<text.length;i++){
+            const c=text[i];
+            if(quoted){
+              if(c==='"'&&text[i+1]==='"'){field+='"';i++}
+              else if(c==='"')quoted=false;
+              else field+=c;
+            }else if(c==='"')quoted=true;
+            else if(c===','){row.push(field);field='';}
+            else if(c==='\\n'){row.push(field);rows.push(row);row=[];field='';}
+            else if(c==='\\r'){if(text[i+1]==='\\n')continue;row.push(field);rows.push(row);row=[];field='';}
+            else field+=c;
+          }
+          if(field.length||row.length){row.push(field);rows.push(row);}
+          if(rows.length<2)throw new Error('CSV has no trade rows');
+          const headers=rows.shift().map(v=>String(v).trim().replace(/^\\uFEFF/,'').toLowerCase());
+          const ix=name=>headers.indexOf(name.toLowerCase());
+          const required=['date','symbol','result','p/l'];
+          if(required.some(name=>ix(name)<0))throw new Error('CSV headers do not match EDGEVAULT trade export');
+          const val=(r,name)=>{const n=ix(name);return n<0?'':String(r[n]??'').trim();};
+          const num=(r,name)=>{const v=val(r,name).replace(/[$,]/g,'');const n=Number(v);return Number.isFinite(n)?n:0;};
+          const yesNo=(r,name)=>{const v=val(r,name).toLowerCase();return v==='yes'?true:v==='no'?false:null;};
+          const split=(r,name)=>val(r,name).split(';').map(v=>v.trim()).filter(Boolean);
+          const trades=rows.filter(r=>r.some(v=>String(v||'').trim())).map((r,i)=>{
+            const date=val(r,'date'),symbol=val(r,'symbol').toUpperCase(),time=val(r,'time');
+            const res=val(r,'result').toLowerCase();
+            return {id:'CSV_'+date+'_'+symbol+'_'+time+'_'+i,date,symbol,dir:val(r,'direction').toLowerCase(),res,
+              pnl:num(r,'p/l'),risk:num(r,'risked'),lot:num(r,'lot'),sl:num(r,'sl pips'),tp:num(r,'tp pips'),
+              tags:split(r,'tags'),mood:val(r,'mood'),ruled:yesNo(r,'rules followed'),riskok:yesNo(r,'risk ok'),
+              reason:val(r,'reason'),notes:val(r,'notes'),time:/^\\d{2}:\\d{2}$/.test(time)?time:'',
+              mist:split(r,'mistakes'),created:0};
+          }).filter(t=>/^\\d{4}-\\d{2}-\\d{2}$/.test(t.date)&&t.symbol&&['win','loss','be','open'].includes(t.res));
+          if(!trades.length)throw new Error('No valid trades found in CSV');
+          return {__csv:true,app:'EDGEVAULT',version:6,data:{trades,start:0}};
+          }
+          '''
+          anchor="async function restore(file){let d;try{d=JSON.parse(await file.text())}catch(e){return toast('This file is not a valid backup (not JSON).')}"
+          if anchor not in s:
+              raise SystemExit("Restore function signature did not match expected safe patch; no HTML changed")
+          restore_start="async function restore(file){let d;try{const raw=await file.text();try{d=JSON.parse(raw)}catch(jsonError){d=edgeVaultParseCSV(raw)}}catch(e){return toast('This file is not a valid EDGEVAULT backup or CSV.')}"
+          s=s.replace(anchor,helper+"\\n"+restore_start,1)
+
+          old="const have=new Set(db.trades.map(t=>t.id)),fresh=T.filter(t=>!have.has(t.id));"
+          new="""const have=new Set(db.trades.map(t=>t.id)),isCSV=!!(d&&d.__csv),key=t=>[t.date,String(t.symbol||'').toUpperCase(),t.time||'',t.res||'',Number(t.pnl)||0,Number(t.lot)||0].join('|'),known=new Map();db.trades.forEach(t=>{const k=key(t);known.set(k,(known.get(k)||0)+1)});const fresh=T.filter(t=>{if(have.has(t.id))return false;if(!isCSV)return true;const k=key(t),n=known.get(k)||0;if(n>0){known.set(k,n-1);return false}return true});"""
+          if old not in s:
+              raise SystemExit("Could not find restore duplicate-check anchor; no HTML changed")
+          s=s.replace(old,new,1)
+
+          # CRITICAL: the HTML also contains a generated history-page string with </body>.
+          # Insert before the final real body close tag, never the first string occurrence.
+          addon='''<div id="edgevault-import-backup" style="position:fixed;right:14px;bottom:84px;z-index:99999"><button type="button" id="edgevault-import-backup-btn" style="background:#d9aa43;color:#111;border:0;border-radius:12px;padding:12px 16px;font-weight:700;box-shadow:0 3px 14px #0005">Import / Restore Backup</button><input id="edgevault-import-backup-file" type="file" accept=".json,.csv,application/json,text/csv" hidden></div><script>(function(){const b=document.getElementById("edgevault-import-backup-btn"),f=document.getElementById("edgevault-import-backup-file");if(b&&f){b.addEventListener("click",()=>f.click());f.addEventListener("change",async function(){const file=this.files&&this.files[0];if(file){try{await restore(file)}catch(e){console.error(e);alert("Could not restore this backup file. Check that it is an EDGEVAULT JSON backup or exported CSV.")}finally{this.value=""}}})}})();</script>'''
+          if 'id="edgevault-import-backup-btn"' not in s:
+              idx=s.rfind("</body>")
+              if idx<0:raise SystemExit("Could not find final HTML body close tag")
+              s=s[:idx]+addon+s[idx:]
+          if s.count("</script>") < 2 or s.rfind("</body>") < s.rfind('id="edgevault-import-backup-btn"'):
+              raise SystemExit("HTML structure verification failed; refusing to build")
+          if 'id="edgevault-import-backup-btn"' not in s or 'accept=".json,.csv,application/json,text/csv"' not in s or "function edgeVaultParseCSV(raw)" not in s:
+              raise SystemExit("Backup import verification failed")
+          p.write_text(s,encoding="utf-8")
+          print("Repaired JSON and CSV restore in",p,"and safely inserted the button before the final </body>.")
           PY
 
       - name: Build release Android App Bundle
