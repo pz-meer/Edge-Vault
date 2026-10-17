@@ -235,7 +235,7 @@ jobs:
           # Inject JS sync on every page finish. Native alarms continue when WebView is backgrounded/closed.
           needle='webView.setWebViewClient(new WebViewClient(){'
           if needle not in source: raise SystemExit("WebViewClient anchor not found")
-          source=source.replace(needle, 'webView.setWebViewClient(new WebViewClient(){ @Override public void onPageFinished(WebView v,String url){super.onPageFinished(v,url);v.evaluateJavascript('+repr(js)+',null); }')
+          source=source.replace(needle, 'webView.setWebViewClient(new WebViewClient(){ @Override public void onPageFinished(WebView v,String url){super.onPageFinished(v,url);v.evaluateJavascript('+__import__("json").dumps(js)+',null); }')
           java.write_text(source)
           print("Added native reminder receiver and existing-HTML notification schedule bridge.")
           PY
