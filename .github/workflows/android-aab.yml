@@ -1,0 +1,69 @@
+name: Build EdgeVault Android AAB
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-aab.yml'
+      - 'EDGEVAULT_Android_Project.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-aab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android-source
+          unzip -q EDGEVAULT_Android_Project.zip -d android-source
+          WRAPPER="$(find android-source -type f -name gradlew -print -quit)"
+          if [ -z "$WRAPPER" ]; then
+            echo "::error::No Gradle wrapper (gradlew) found inside EDGEVAULT_Android_Project.zip."
+            echo "The archive must contain a complete Android Gradle project."
+            find android-source -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+          echo "PROJECT_DIR=$(dirname "$WRAPPER")" >> "$GITHUB_ENV"
+          chmod +x "$WRAPPER"
+
+      - name: Build release Android App Bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          ./gradlew --no-daemon bundleRelease
+
+      - name: Find generated AAB
+        id: find-aab
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAB="$(find "$PROJECT_DIR" -type f -path '*/build/outputs/bundle/*/*.aab' -print -quit)"
+          if [ -z "$AAB" ]; then
+            echo "::error::Gradle finished but no .aab file was found."
+            exit 1
+          fi
+          echo "aab_path=$AAB" >> "$GITHUB_OUTPUT"
+          echo "AAB generated at: $AAB"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EdgeVault-Android-AAB
+          path: ${{ steps.find-aab.outputs.aab_path }}
+          if-no-files-found: error
+          retention-days: 14
