@@ -66,6 +66,102 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Configure persistent banner, daily rewarded test ad, and EV icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("android-source")
+          gradle=next(root.rglob("app/build.gradle"))
+          s=gradle.read_text()
+          dep="implementation 'com.google.android.gms:play-services-ads:24.6.0'"
+          if "play-services-ads" not in s:
+              if "dependencies {" in s:
+                  s=s.replace("dependencies {", "dependencies {\\n    "+dep, 1)
+              else:
+                  s += "\\ndependencies {\\n    "+dep+"\\n}\\n"
+              gradle.write_text(s)
+          manifest=next(root.rglob("app/src/main/AndroidManifest.xml"))
+          s=manifest.read_text()
+          if "com.google.android.gms.ads.APPLICATION_ID" not in s:
+              s=s.replace("</application>", '<meta-data android:name="com.google.android.gms.ads.APPLICATION_ID" android:value="ca-app-pub-3940256099942544~3347511713"/></application>')
+              manifest.write_text(s)
+          app=gradle.parent
+          # Adaptive icon that matches the supplied EV gradient/logo style.
+          res=app/"src/main/res"
+          for folder in ["drawable","mipmap-mdpi","mipmap-hdpi","mipmap-xhdpi","mipmap-xxhdpi","mipmap-xxxhdpi","mipmap-anydpi-v26"]:
+              (res/folder).mkdir(parents=True,exist_ok=True)
+          (res/"drawable/edgevault_icon_bg.xml").write_text('''<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle"><corners android:radius="24dp"/><gradient android:angle="315" android:startColor="#287BFF" android:centerColor="#5265F5" android:endColor="#8742F6"/></shape>''')
+          fg='''<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#FFFFFFFF" android:pathData="M13,31 L45,31 L49,41 L28,41 L25,48 L45,48 L41,57 L21,57 L18,65 L43,65 L39,75 L7,75 Z"/><path android:fillColor="#FFFFFFFF" android:pathData="M48,31 L61,31 L72,57 L84,31 L98,31 L79,78 L68,78 Z"/></vector>'''
+          (res/"drawable/edgevault_icon_fg.xml").write_text(fg)
+          (res/"mipmap-anydpi-v26/ic_launcher.xml").write_text('''<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@drawable/edgevault_icon_bg"/><foreground android:drawable="@drawable/edgevault_icon_fg"/></adaptive-icon>''')
+          legacy='''<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#5366F4" android:pathData="M0,0 L108,0 L108,108 L0,108 Z"/><path android:fillColor="#FFFFFFFF" android:pathData="M13,31 L45,31 L49,41 L28,41 L25,48 L45,48 L41,57 L21,57 L18,65 L43,65 L39,75 L7,75 Z"/><path android:fillColor="#FFFFFFFF" android:pathData="M48,31 L61,31 L72,57 L84,31 L98,31 L79,78 L68,78 Z"/></vector>'''
+          for d in ["mdpi","hdpi","xhdpi","xxhdpi","xxxhdpi"]:
+              (res/f"mipmap-{d}/ic_launcher.xml").write_text(legacy)
+          # Use mipmap icon for both normal and round launcher icon.
+          s=manifest.read_text().replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/ic_launcher"').replace('android:roundIcon="@mipmap/ic_launcher"', 'android:roundIcon="@mipmap/ic_launcher"')
+          manifest.write_text(s)
+          java=next(root.rglob("app/src/main/java/**/MainActivity.java"))
+          java.write_text(r'''package com.edgevault.app;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.Intent;
+          import android.content.ActivityNotFoundException;
+          import android.content.SharedPreferences;
+          import android.net.Uri;
+          import android.view.View;
+          import android.webkit.*;
+          import android.widget.*;
+          import android.graphics.Color;
+          import com.google.android.gms.ads.*;
+          import com.google.android.gms.ads.rewarded.RewardedAd;
+          import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+          public class MainActivity extends Activity {
+            private static final int FILE_CHOOSER_REQUEST=4107;
+            private static final String REWARDED_ID="ca-app-pub-3940256099942544/5224354917";
+            private WebView webView; private ValueCallback<Uri[]> filePathCallback;
+            private AdView banner; private Button rewardButton; private RewardedAd rewarded;
+            private SharedPreferences prefs;
+            @Override public void onCreate(Bundle state){
+              super.onCreate(state);
+              prefs=getSharedPreferences("edgevault_ads",MODE_PRIVATE);
+              MobileAds.initialize(this,status->{});
+              LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.WHITE);
+              webView=new WebView(this); root.addView(webView,new LinearLayout.LayoutParams(-1,0,1f));
+              LinearLayout actions=new LinearLayout(this); actions.setGravity(android.view.Gravity.CENTER); actions.setPadding(8,4,8,4);
+              rewardButton=new Button(this); rewardButton.setText("Watch Daily Reward Ad"); actions.addView(rewardButton,new LinearLayout.LayoutParams(-1,-2)); root.addView(actions,new LinearLayout.LayoutParams(-1,-2));
+              rewardButton.setOnClickListener(v->loadRewarded());
+              banner=new AdView(this); banner.setAdUnitId("ca-app-pub-3940256099942544/6300978111");
+              int width=(int)(getResources().getDisplayMetrics().widthPixels/getResources().getDisplayMetrics().density);
+              banner.setAdSize(AdSize.getLargeAnchoredAdaptiveBannerAdSize(this,width)); root.addView(banner,new LinearLayout.LayoutParams(-1,-2)); banner.loadAd(new AdRequest.Builder().build());
+              setContentView(root); refreshDailyButton();
+              WebSettings s=webView.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setDatabaseEnabled(true); s.setAllowFileAccess(true); s.setAllowContentAccess(true); s.setMediaPlaybackRequiresUserGesture(false); s.setSupportZoom(false); s.setBuiltInZoomControls(false); s.setDisplayZoomControls(false);
+              webView.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){Uri u=r.getUrl();String scheme=u.getScheme();if("http".equals(scheme)||"https".equals(scheme)){try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}return true;}return false;}});
+              webView.setWebChromeClient(new WebChromeClient(){@Override public boolean onShowFileChooser(WebView v,ValueCallback<Uri[]> cb,FileChooserParams params){if(filePathCallback!=null)filePathCallback.onReceiveValue(null);filePathCallback=cb;try{startActivityForResult(params.createIntent(),FILE_CHOOSER_REQUEST);}catch(ActivityNotFoundException e){filePathCallback=null;return false;}return true;}});
+              if(state!=null)webView.restoreState(state);else webView.loadUrl("file:///android_asset/index.html");
+            }
+            private String today(){return new SimpleDateFormat("yyyy-MM-dd",Locale.US).format(new Date());}
+            private void refreshDailyButton(){boolean used=today().equals(prefs.getString("reward_date",""));rewardButton.setEnabled(!used);rewardButton.setText(used?"Daily Reward Ad Used":"Watch Daily Reward Ad");}
+            private void loadRewarded(){
+              if(today().equals(prefs.getString("reward_date",""))){refreshDailyButton();return;}
+              rewardButton.setEnabled(false);rewardButton.setText("Loading test ad…");
+              RewardedAd.load(this,REWARDED_ID,new AdRequest.Builder().build(),new RewardedAdLoadCallback(){
+                @Override public void onAdLoaded(RewardedAd ad){rewarded=ad;ad.show(MainActivity.this,item->{prefs.edit().putString("reward_date",today()).apply();runOnUiThread(()->{rewardButton.setText("Test reward received");rewardButton.setEnabled(false);});webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('edgevaultReward',{detail:{type:'"+item.getType()+"',amount:"+item.getAmount()+"}}))",null);});}
+                @Override public void onAdFailedToLoad(LoadAdError error){rewarded=null;runOnUiThread(()->{rewardButton.setEnabled(true);rewardButton.setText("Retry Daily Reward Ad");});}
+              });
+            }
+            @Override protected void onSaveInstanceState(Bundle out){if(webView!=null)webView.saveState(out);super.onSaveInstanceState(out);}
+            @Override public void onBackPressed(){if(webView!=null&&webView.canGoBack())webView.goBack();else super.onBackPressed();}
+            @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);if(requestCode==FILE_CHOOSER_REQUEST&&filePathCallback!=null){filePathCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode,data));filePathCallback=null;}}
+            @Override protected void onDestroy(){if(banner!=null)banner.destroy();if(filePathCallback!=null){filePathCallback.onReceiveValue(null);filePathCallback=null;}if(webView!=null){webView.destroy();webView=null;}super.onDestroy();}
+          }''')
+          print("Configured persistent banner test ad, once-per-day rewarded test ad, and EV-style launcher icon assets.")
+          PY
+
       - name: Build release Android App Bundle
         shell: bash
         run: |
