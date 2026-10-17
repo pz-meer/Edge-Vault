@@ -294,34 +294,34 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
           root=Path("android-source")
-          htmls=[p for p in root.rglob("*.html") if "build" not in p.parts]
           target=None
-          for p in htmls:
+          for p in root.rglob("*.html"):
+              if "build" in p.parts:
+                  continue
               s=p.read_text(errors="replace")
-              if re.search(r'async?\\s+function\\s+restore\\s*\\(',s):
+              if "function restore(" in s or "async function restore(" in s:
                   target=(p,s)
                   break
-          if not target:
-              raise SystemExit("No HTML restore(file) implementation found")
+          if target is None:
+              raise SystemExit("No existing restore(file) implementation found in HTML assets")
           p,s=target
-          if 'id="impf"' not in s:
-              s=s.replace('</body>', '<input id="impf" type="file" accept=".json,application/json" hidden><script>document.getElementById("impf").addEventListener("change",async function(){const f=this.files&&this.files[0];if(f){try{await restore(f)}catch(e){console.error(e);if(typeof toast==="function")toast("Could not restore this backup.")}finally{this.value=""}}});</script></body>',1)
           if 'data-act="restore"' not in s:
-              pat=re.compile(r"<button[^>]*data-act=.backup.[^>]*>.*?</button>",re.S|re.I)
-              m=pat.search(s)
-              if not m:
-                  raise SystemExit("Could not locate existing backup button in "+str(p))
-              s=s[:m.end()]+ '<button data-act="restore">Import / Restore Backup</button>'+s[m.end():]
-          # Wire the restore button through the app's existing delegated click handler.
-          if "if(a==='restore')" not in s and 'if(a==="restore")' not in s:
-              anchor="const a=D.act;"
-              if anchor not in s:
-                  raise SystemExit("Could not locate delegated app action handler in "+str(p))
-              s=s.replace(anchor, anchor+'if(a===\'restore\'){document.getElementById(\'impf\').click();return}',1)
-          if 'data-act="restore"' not in s or 'id="impf"' not in s or "restore(f)" not in s:
-              raise SystemExit("Backup restore controls failed verification in "+str(p))
+              idx=s.find('data-act="backup"')
+              if idx < 0:
+                  raise SystemExit("Existing backup button action not found in "+str(p))
+              button_start=s.rfind("<button",0,idx)
+              button_end=s.find("</button>",idx)
+              if button_start < 0 or button_end < 0:
+                  raise SystemExit("Could not identify the existing backup button in "+str(p))
+              button_end += len("</button>")
+              s=s[:button_end]+'<button type="button" id="edgevault-restore-btn">Import / Restore Backup</button>'+s[button_end:]
+          if 'id="impf"' not in s:
+              s=s.replace("</body>", '<input id="impf" type="file" accept=".json,application/json" hidden><script>(function(){const b=document.getElementById("edgevault-restore-btn");const f=document.getElementById("impf");if(b&&f)b.addEventListener("click",()=>f.click());if(f)f.addEventListener("change",async function(){const file=this.files&&this.files[0];if(file){try{await restore(file)}catch(e){console.error(e);alert("Could not restore this backup file.")}finally{this.value=""}}});})();</script></body>',1)
+          if 'data-act="restore"' not in s and 'id="edgevault-restore-btn"' not in s:
+              raise SystemExit("Restore button was not added to "+str(p))
+          if 'id="impf"' not in s or "restore(file)" not in s:
+              raise SystemExit("Restore file input handler was not added to "+str(p))
           p.write_text(s)
           print("Added and verified Import / Restore Backup in",p)
           PY
