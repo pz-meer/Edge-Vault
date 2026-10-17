@@ -309,7 +309,7 @@ jobs:
           if 'id="impf"' not in s:
               s=s.replace('</body>', '<input id="impf" type="file" accept=".json,application/json" hidden><script>document.getElementById("impf").addEventListener("change",async function(){const f=this.files&&this.files[0];if(f){try{await restore(f)}catch(e){console.error(e);if(typeof toast==="function")toast("Could not restore this backup.")}finally{this.value=""}}});</script></body>',1)
           if 'data-act="restore"' not in s:
-              pat=re.compile(r'<button\\b(?=[^>]*data-act=[\\\"\\\']backup[\\\"\\\'])[^>]*>.*?</button>',re.S|re.I)
+              pat=re.compile(r"<button[^>]*data-act=.backup.[^>]*>.*?</button>",re.S|re.I)
               m=pat.search(s)
               if not m:
                   raise SystemExit("Could not locate existing backup button in "+str(p))
