@@ -288,6 +288,43 @@ jobs:
           print("Android notification compatibility patch applied to",changed,"HTML file(s)")
           PY
 
+      - name: Ensure visible backup import and restore controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("android-source")
+          htmls=[p for p in root.rglob("*.html") if "build" not in p.parts]
+          if not htmls:
+              raise SystemExit("No HTML assets found while checking backup/restore controls")
+          checked=0
+          for p in htmls:
+              s=p.read_text(errors="replace")
+              if "function restore(" not in s and "async function restore(" not in s:
+                  continue
+              checked+=1
+              # The app's Vault backup card should expose a clear restore/import button.
+              if 'data-act="restore"' not in s:
+                  old='<button class="pri" data-act="backup">Download backup</button>'
+                  new=old+'<button data-act="restore">Import / Restore backup</button>'
+                  if old in s:
+                      s=s.replace(old,new,1)
+                      p.write_text(s)
+                      print("Added visible Import / Restore button to",p)
+                  else:
+                      raise SystemExit("Restore logic exists but the Vault backup-card insertion point was not found in "+str(p))
+              # Fail the build rather than shipping a nonfunctional button.
+              if 'data-act="restore"' not in s or 'id="impf"' not in s or "restore(this.files" not in s:
+                  # Older variants may use a change listener with a differently named callback;
+                  # check for both a file input and an event dispatch to restore().
+                  if 'data-act="restore"' not in s or 'id="impf"' not in s or "restore(file" not in s:
+                      raise SystemExit("Backup restore controls or file-input handler missing in "+str(p))
+              print("Verified backup/restore UI and restore parser in",p)
+          if not checked:
+              raise SystemExit("No HTML file containing a restore(file) function was found; refusing to ship without restore support")
+          PY
+
       - name: Build release Android App Bundle
         shell: bash
         run: |
