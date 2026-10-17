@@ -361,15 +361,51 @@ jobs:
 
           # CRITICAL: the HTML also contains a generated history-page string with </body>.
           # Insert before the final real body close tag, never the first string occurrence.
-          addon='''<div id="edgevault-import-backup" style="position:fixed;right:14px;bottom:84px;z-index:99999"><button type="button" id="edgevault-import-backup-btn" style="background:#d9aa43;color:#111;border:0;border-radius:12px;padding:12px 16px;font-weight:700;box-shadow:0 3px 14px #0005">Import / Restore Backup</button><input id="edgevault-import-backup-file" type="file" accept=".json,.csv,application/json,text/csv" hidden></div><script>(function(){const b=document.getElementById("edgevault-import-backup-btn"),f=document.getElementById("edgevault-import-backup-file");if(b&&f){b.addEventListener("click",()=>f.click());f.addEventListener("change",async function(){const file=this.files&&this.files[0];if(file){try{await restore(file)}catch(e){console.error(e);alert("Could not restore this backup file. Check that it is an EDGEVAULT JSON backup or exported CSV.")}finally{this.value=""}}})}})();</script>'''
-          if 'id="edgevault-import-backup-btn"' not in s:
+          addon='''<script>
+          (function(){
+            if(window.__edgeVaultBackupUiInstalled)return;window.__edgeVaultBackupUiInstalled=true;
+            const csvCell=v=>{let x=Array.isArray(v)?v.join('; '):(v==null?'':String(v));return /[",\\r\\n]/.test(x)?'"'+x.replace(/"/g,'""')+'"':x};
+            const rows=[
+              ['date','symbol','direction','result','p/l','risked','lot','sl pips','tp pips','time','tags','mood','rules followed','risk ok','reason','notes','mistakes'],
+              ...((window.db&&Array.isArray(window.db.trades))?window.db.trades:[]).map(t=>[t.date,t.symbol,t.dir,t.res,t.pnl,t.risk,t.lot,t.sl,t.tp,t.time,t.tags,t.mood,t.ruled,t.riskok,t.reason,t.notes,t.mist])
+            ];
+            function download(name,content,type){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}
+            function panel(){
+              let host=document.getElementById('vault')||document.querySelector('[data-page="vault"]')||document.querySelector('.page-vault')||document.querySelector('#page-vault');
+              if(!host){
+                const candidates=[...document.querySelectorAll('h1,h2,h3,[role="heading"],button,a,[role="tab"]')];
+                const title=candidates.find(e=>(e.textContent||'').trim().toLowerCase()==='vault');
+                if(title)host=title.closest('[data-page],section,main,[class*="page"],[id*="page"]')||title.parentElement;
+              }
+              if(!host)return false;
+              let box=document.getElementById('edgevault-backup-section');
+              if(box&&box.parentElement===host)return true;
+              if(box)box.remove();
+              box=document.createElement('section');box.id='edgevault-backup-section';
+              box.style.cssText='margin:20px 0 28px;padding:18px;border:1px solid var(--border,rgba(140,150,170,.28));border-radius:16px;background:var(--card,rgba(120,130,150,.08));color:inherit;position:relative;z-index:5';
+              box.innerHTML='<div style="font-size:17px;font-weight:800;margin-bottom:5px">Backup &amp; Restore</div><div style="font-size:12px;opacity:.75;margin-bottom:14px">Save your trade journal or restore it later.</div><div style="display:grid;grid-template-columns:1fr;gap:9px"><button type="button" id="ev-backup-csv" style="padding:12px;border:0;border-radius:10px;background:#d9aa43;color:#171717;font-weight:800">Download CSV Backup</button><button type="button" id="ev-backup-json" style="padding:12px;border:1px solid currentColor;border-radius:10px;background:transparent;color:inherit;font-weight:700">Export Full Backup (JSON)</button><button type="button" id="ev-backup-import" style="padding:12px;border:1px solid currentColor;border-radius:10px;background:transparent;color:inherit;font-weight:700">Import / Restore Backup</button><input id="ev-backup-file" type="file" accept=".json,.csv,application/json,text/csv" hidden></div>';
+              host.appendChild(box);
+              box.querySelector('#ev-backup-csv').onclick=()=>{const data=rows.map(r=>r.map(csvCell).join(',')).join('\\r\\n');download('edgevault-trades-backup.csv','\\uFEFF'+data,'text/csv;charset=utf-8')};
+              box.querySelector('#ev-backup-json').onclick=()=>{if(!window.db){alert('Vault data is not ready yet. Open Vault and try again.');return}download('edgevault-full-backup.json',JSON.stringify({app:'EDGEVAULT',version:6,data:window.db},null,2),'application/json')};
+              box.querySelector('#ev-backup-import').onclick=()=>box.querySelector('#ev-backup-file').click();
+              box.querySelector('#ev-backup-file').onchange=async function(){const file=this.files&&this.files[0];if(file){try{await restore(file)}catch(e){console.error(e);alert('Could not restore this backup. Please choose an EDGEVAULT JSON backup or CSV exported from EDGEVAULT.')}finally{this.value=''}}};
+              return true;
+            }
+            const run=()=>{panel();};
+            document.addEventListener('click',()=>setTimeout(run,80),true);
+            const mo=new MutationObserver(()=>{if(!document.getElementById('edgevault-backup-section'))panel()});
+            mo.observe(document.documentElement,{childList:true,subtree:true});
+            let tries=0;const timer=setInterval(()=>{run();if(++tries>40)clearInterval(timer)},500);
+          })();
+          </script>'''
+          if 'id="edgevault-backup-section"' not in s:
               idx=s.rfind("</body>")
               if idx<0:raise SystemExit("Could not find final HTML body close tag")
               s=s[:idx]+addon+s[idx:]
-          if s.count("</script>") < 2 or s.rfind("</body>") < s.rfind('id="edgevault-import-backup-btn"'):
+          if s.count("</script>") < 2 or s.rfind("</body>") < s.rfind('id="edgevault-backup-section"'):
               raise SystemExit("HTML structure verification failed; refusing to build")
-          if 'id="edgevault-import-backup-btn"' not in s or 'accept=".json,.csv,application/json,text/csv"' not in s or "function edgeVaultParseCSV(raw)" not in s:
-              raise SystemExit("Backup import verification failed")
+          if 'id="edgevault-backup-section"' not in s or 'Download CSV Backup' not in s or 'Import / Restore Backup' not in s or "function edgeVaultParseCSV(raw)" not in s:
+              raise SystemExit("Backup UI verification failed")
           p.write_text(s,encoding="utf-8")
           print("Repaired JSON and CSV restore in",p,"and safely inserted the button before the final </body>.")
           PY
