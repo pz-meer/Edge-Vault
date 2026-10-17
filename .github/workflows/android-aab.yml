@@ -310,7 +310,7 @@ jobs:
 
           # Parse the app's own exported CSV format (including quoted commas/newlines).
           helper=r'''function edgeVaultParseCSV(raw){
-          const text=String(raw||'').replace(/^\\uFEFF/,'');
+          const text=String(raw||'').replace(/^\uFEFF/,'');
           const rows=[];let row=[],field='',quoted=false;
           for(let i=0;i<text.length;i++){
             const c=text[i];
@@ -320,13 +320,13 @@ jobs:
               else field+=c;
             }else if(c==='"')quoted=true;
             else if(c===','){row.push(field);field='';}
-            else if(c==='\\n'){row.push(field);rows.push(row);row=[];field='';}
-            else if(c==='\\r'){if(text[i+1]==='\\n')continue;row.push(field);rows.push(row);row=[];field='';}
+            else if(c==='\n'){row.push(field);rows.push(row);row=[];field='';}
+            else if(c==='\r'){if(text[i+1]==='\n')continue;row.push(field);rows.push(row);row=[];field='';}
             else field+=c;
           }
           if(field.length||row.length){row.push(field);rows.push(row);}
           if(rows.length<2)throw new Error('CSV has no trade rows');
-          const headers=rows.shift().map(v=>String(v).trim().replace(/^\\uFEFF/,'').toLowerCase());
+          const headers=rows.shift().map(v=>String(v).trim().replace(/^\uFEFF/,'').toLowerCase());
           const ix=name=>headers.indexOf(name.toLowerCase());
           const required=['date','symbol','result','p/l'];
           if(required.some(name=>ix(name)<0))throw new Error('CSV headers do not match EDGEVAULT trade export');
@@ -340,9 +340,9 @@ jobs:
             return {id:'CSV_'+date+'_'+symbol+'_'+time+'_'+i,date,symbol,dir:val(r,'direction').toLowerCase(),res,
               pnl:num(r,'p/l'),risk:num(r,'risked'),lot:num(r,'lot'),sl:num(r,'sl pips'),tp:num(r,'tp pips'),
               tags:split(r,'tags'),mood:val(r,'mood'),ruled:yesNo(r,'rules followed'),riskok:yesNo(r,'risk ok'),
-              reason:val(r,'reason'),notes:val(r,'notes'),time:/^\\d{2}:\\d{2}$/.test(time)?time:'',
+              reason:val(r,'reason'),notes:val(r,'notes'),time:/^\d{2}:\d{2}$/.test(time)?time:'',
               mist:split(r,'mistakes'),created:0};
-          }).filter(t=>/^\\d{4}-\\d{2}-\\d{2}$/.test(t.date)&&t.symbol&&['win','loss','be','open'].includes(t.res));
+          }).filter(t=>/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&t.symbol&&['win','loss','be','open'].includes(t.res));
           if(!trades.length)throw new Error('No valid trades found in CSV');
           return {__csv:true,app:'EDGEVAULT',version:6,data:{trades,start:0}};
           }
@@ -351,7 +351,7 @@ jobs:
           if anchor not in s:
               raise SystemExit("Restore function signature did not match expected safe patch; no HTML changed")
           restore_start="async function restore(file){let d;try{const raw=await file.text();try{d=JSON.parse(raw)}catch(jsonError){d=edgeVaultParseCSV(raw)}}catch(e){return toast('This file is not a valid EDGEVAULT backup or CSV.')}"
-          s=s.replace(anchor,helper+"\\n"+restore_start,1)
+          s=s.replace(anchor,helper+"\n"+restore_start,1)
 
           old="const have=new Set(db.trades.map(t=>t.id)),fresh=T.filter(t=>!have.has(t.id));"
           new="""const have=new Set(db.trades.map(t=>t.id)),isCSV=!!(d&&d.__csv),key=t=>[t.date,String(t.symbol||'').toUpperCase(),t.time||'',t.res||'',Number(t.pnl)||0,Number(t.lot)||0].join('|'),known=new Map();db.trades.forEach(t=>{const k=key(t);known.set(k,(known.get(k)||0)+1)});const fresh=T.filter(t=>{if(have.has(t.id))return false;if(!isCSV)return true;const k=key(t),n=known.get(k)||0;if(n>0){known.set(k,n-1);return false}return true});"""
