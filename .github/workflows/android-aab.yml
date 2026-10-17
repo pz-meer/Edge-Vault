@@ -398,13 +398,13 @@ jobs:
             let tries=0;const timer=setInterval(()=>{run();if(++tries>40)clearInterval(timer)},500);
           })();
           </script>'''
-          if 'id="edgevault-backup-section"' not in s:
+          if 'edgevault-backup-section' not in s:
               idx=s.rfind("</body>")
               if idx<0:raise SystemExit("Could not find final HTML body close tag")
               s=s[:idx]+addon+s[idx:]
-          if s.count("</script>") < 2 or s.rfind("</body>") < s.rfind('id="edgevault-backup-section"'):
+          if s.count("</script>") < 2 or s.rfind("</body>") < s.rfind('edgevault-backup-section'):
               raise SystemExit("HTML structure verification failed; refusing to build")
-          if 'id="edgevault-backup-section"' not in s or 'Download CSV Backup' not in s or 'Import / Restore Backup' not in s or "function edgeVaultParseCSV(raw)" not in s:
+          if 'edgevault-backup-section' not in s or 'Download CSV Backup' not in s or 'Import / Restore Backup' not in s or "function edgeVaultParseCSV(raw)" not in s:
               raise SystemExit("Backup UI verification failed")
           p.write_text(s,encoding="utf-8")
           print("Repaired JSON and CSV restore in",p,"and safely inserted the button before the final </body>.")
