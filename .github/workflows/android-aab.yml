@@ -30,22 +30,39 @@ jobs:
           set -euo pipefail
           mkdir -p android-source
           unzip -q EDGEVAULT_Android_Project.zip -d android-source
-          WRAPPER="$(find android-source -type f -name gradlew -print -quit)"
-          if [ -z "$WRAPPER" ]; then
-            echo "::error::No Gradle wrapper (gradlew) found inside EDGEVAULT_Android_Project.zip."
-            echo "The archive must contain a complete Android Gradle project."
-            find android-source -maxdepth 4 -type f | head -100
+          SETTINGS="$(find android-source -type f -name settings.gradle -o -name settings.gradle.kts | head -1)"
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::No settings.gradle or settings.gradle.kts found in Android project archive."
+            find android-source -maxdepth 5 -type f | head -100
             exit 1
           fi
-          echo "PROJECT_DIR=$(dirname "$WRAPPER")" >> "$GITHUB_ENV"
-          chmod +x "$WRAPPER"
+          PROJECT="$(dirname "$SETTINGS")"
+          WRAPPER="$PROJECT/gradlew"
+          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+          if [ -f "$WRAPPER" ]; then
+            chmod +x "$WRAPPER"
+            echo "USE_WRAPPER=true" >> "$GITHUB_ENV"
+          else
+            echo "USE_WRAPPER=false" >> "$GITHUB_ENV"
+            echo "Gradle wrapper missing; will use installed Gradle."
+          fi
+
+      - name: Set up Gradle
+        if: env.USE_WRAPPER == 'false'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
 
       - name: Build release Android App Bundle
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          ./gradlew --no-daemon bundleRelease
+          if [ "$USE_WRAPPER" = "true" ]; then
+            ./gradlew --no-daemon bundleRelease
+          else
+            gradle --no-daemon bundleRelease
+          fi
 
       - name: Find generated AAB
         id: find-aab
