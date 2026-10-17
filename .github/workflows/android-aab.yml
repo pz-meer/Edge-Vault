@@ -232,17 +232,18 @@ jobs:
           # Add bridge after WebView setup; sync app's existing localStorage notification model.
           source=source.replace('WebSettings s=webView.getSettings();', '''webView.addJavascriptInterface(new Object(){
                 @android.webkit.JavascriptInterface public void schedule(String id,int h,int m,boolean enabled,String title,String body){runOnUiThread(()->scheduleReminder(id,h,m,enabled,title,body));}
+                @android.webkit.JavascriptInterface public void notifyUser(String title,String body,int nid){runOnUiThread(()->{if(android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},7101);return;}android.app.NotificationManager nm=(android.app.NotificationManager)getSystemService(NOTIFICATION_SERVICE);if(android.os.Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(new android.app.NotificationChannel("edgevault_reminders","EDGEVAULT reminders",android.app.NotificationManager.IMPORTANCE_HIGH));android.app.Notification.Builder b=android.os.Build.VERSION.SDK_INT>=26?new android.app.Notification.Builder(MainActivity.this,"edgevault_reminders"):new android.app.Notification.Builder(MainActivity.this);b.setSmallIcon(getApplicationInfo().icon).setContentTitle(title).setContentText(body).setAutoCancel(true);nm.notify(nid,b.build());});}
                 @android.webkit.JavascriptInterface public void cancelAll(){runOnUiThread(()->{android.app.AlarmManager am=(android.app.AlarmManager)getSystemService(ALARM_SERVICE);});}
               },"EdgeVaultReminder");
               WebSettings s=webView.getSettings();''')
-          js='''(function(){
+          js='''function __edgevaultSyncReminders(){
             try {
               const titles={asia:["Asia session started","Asia is open. Build your setup for the day, or note a wish or plan. Keep risk small."],ls:["London session started","London is open. Volume is rising, so stay patient and wait for your setup."],lsb:["London Silver Bullet time","The London Silver Bullet window is open now. Look for your setup and stay disciplined."],ny:["New York session started","New York is open. Stay disciplined before entering."],nsb:["New York Silver Bullet time","The New York Silver Bullet window is open now. Look for your setup and stay disciplined."],le:["London session ended","London is closed. Review your trades."],d1:["Data entry reminder 1 of 3","You have not logged any data today. Open EDGEVAULT and add your entry."],d2:["Data entry reminder 2 of 3","Still no data entered today. Log your trades while they are fresh."],d3:["Final data entry reminder","Last reminder: log your data so your journal stays complete."]};
               let db=null; for(let i=0;i<localStorage.length;i++){try{let x=JSON.parse(localStorage.getItem(localStorage.key(i)));if(x&&x.nt&&x.nt.dt&&x.nt.ev){db=x;break}}catch(e){}}
               if(!db||!window.EdgeVaultReminder)return;
               const ids=Object.keys(titles);ids.forEach(id=>{let t=String((db.nt.dt||{})[id]||"09:00").split(":");let h=parseInt(t[0],10),m=parseInt(t[1],10);if(!Number.isFinite(h)||!Number.isFinite(m))return;EdgeVaultReminder.schedule(id,h,m,!!db.nt.on&&!!db.nt.ev[id],titles[id][0],titles[id][1]);});
             }catch(e){console.log("Reminder sync failed",e)}
-          })();'''
+          }; __edgevaultSyncReminders(); setInterval(__edgevaultSyncReminders,5000);'''
           # Add receiver declaration and permissions.
           ms=manifest.read_text()
           if "ReminderReceiver" not in ms:
@@ -257,6 +258,34 @@ jobs:
           source=source.replace(needle, 'webView.setWebViewClient(new WebViewClient(){ @Override public void onPageFinished(WebView v,String url){super.onPageFinished(v,url);v.evaluateJavascript('+__import__("json").dumps(js)+',null); }')
           java.write_text(source)
           print("Added native reminder receiver and existing-HTML notification schedule bridge.")
+          PY
+
+      - name: Route EDGEVAULT HTML notifications through native Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("android-source")
+          htmls=list(root.rglob("app/src/main/assets/**/*.html"))
+          if not htmls:
+              htmls=[p for p in root.rglob("*.html") if "build" not in p.parts]
+          if not htmls:
+              raise SystemExit("No HTML assets found to patch notifications")
+          patches=[
+            ("const NP=()=>('Notification' in window)?Notification.permission:'unsupported';", "const NP=()=>window.EdgeVaultReminder?'granted':(('Notification' in window)?Notification.permission:'unsupported');"),
+            ("async function nFire(title,body,tag){\n let ok=false;", "async function nFire(title,body,tag){\n if(window.EdgeVaultReminder){try{window.EdgeVaultReminder.notifyUser(title,body,Math.abs(String(tag||title).split('').reduce((a,c)=>((a*31+c.charCodeAt(0))|0),7))%50000+20000);return}catch(e){}}\n let ok=false;"),
+            ("async function notifEnable(){\n if(NP()==='unsupported')return toast('This browser does not support notifications.');", "async function notifEnable(){\n if(window.EdgeVaultReminder){db.nt.on=1;save();go('vault');await nFire('EDGEVAULT notifications enabled','Native Android reminders are ready.','ev-test');return}\n if(NP()==='unsupported')return toast('This browser does not support notifications.');")
+          ]
+          changed=0
+          for p in htmls:
+              s=p.read_text(errors="replace")
+              old=s
+              for a,b in patches:
+                  if a in s:s=s.replace(a,b,1)
+              if s!=old:p.write_text(s);changed+=1;print("Patched",p)
+          if not changed:raise SystemExit("Notification patch anchors were not found in HTML assets")
+          print("Android notification compatibility patch applied to",changed,"HTML file(s)")
           PY
 
       - name: Build release Android App Bundle
