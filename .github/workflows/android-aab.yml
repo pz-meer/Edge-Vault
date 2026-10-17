@@ -97,11 +97,10 @@ jobs:
           (res/"drawable/edgevault_icon_fg.xml").write_text(fg)
           (res/"mipmap-anydpi-v26/ic_launcher.xml").write_text('''<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@drawable/edgevault_icon_bg"/><foreground android:drawable="@drawable/edgevault_icon_fg"/></adaptive-icon>''')
           legacy='''<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#5366F4" android:pathData="M0,0 L108,0 L108,108 L0,108 Z"/><path android:fillColor="#FFFFFFFF" android:pathData="M13,31 L45,31 L49,41 L28,41 L25,48 L45,48 L41,57 L21,57 L18,65 L43,65 L39,75 L7,75 Z"/><path android:fillColor="#FFFFFFFF" android:pathData="M48,31 L61,31 L72,57 L84,31 L98,31 L79,78 L68,78 Z"/></vector>'''
+          # Keep archive's existing density PNGs; do not create duplicate ic_launcher.xml files beside them.
           for d in ["mdpi","hdpi","xhdpi","xxhdpi","xxxhdpi"]:
-              (res/f"mipmap-{d}/ic_launcher.xml").write_text(legacy)
-          # Use mipmap icon for both normal and round launcher icon.
-          s=manifest.read_text().replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@mipmap/ic_launcher"').replace('android:roundIcon="@mipmap/ic_launcher"', 'android:roundIcon="@mipmap/ic_launcher"')
-          manifest.write_text(s)
+              (res/f"mipmap-{d}/ic_launcher.xml").unlink(missing_ok=True)
+          # Android 8+ uses adaptive vector icon; older launchers keep the archive PNG until original PNG is integrated.
           java=next(root.rglob("app/src/main/java/**/MainActivity.java"))
           java.write_text(r'''package com.edgevault.app;
           import android.app.Activity;
