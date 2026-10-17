@@ -161,6 +161,85 @@ jobs:
           print("Configured persistent banner test ad, once-per-day rewarded test ad, and EV-style launcher icon assets.")
           PY
 
+      - name: Add native scheduled notifications for existing HTML reminders
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path("android-source")
+          manifest=next(root.rglob("app/src/main/AndroidManifest.xml"))
+          app=next(root.rglob("app/build.gradle")).parent
+          java=next(root.rglob("app/src/main/java/**/MainActivity.java"))
+          source=java.read_text()
+          m=re.search(r'^package\s+([\w.]+);',source,re.M)
+          if not m: raise SystemExit("Cannot determine MainActivity package")
+          pkg=m.group(1)
+          # Receiver posts local notifications after app activity is no longer running.
+          receiver='''package PKG;
+          import android.app.*;
+          import android.content.*;
+          import android.os.Build;
+          public class ReminderReceiver extends BroadcastReceiver {
+            @Override public void onReceive(Context c, Intent i) {
+              String title=i.getStringExtra("title"); String body=i.getStringExtra("body");
+              if(title==null)title="EDGEVAULT reminder"; if(body==null)body="Your scheduled reminder is due.";
+              NotificationManager nm=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
+              if(Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(new NotificationChannel("edgevault_reminders","EDGEVAULT reminders",NotificationManager.IMPORTANCE_HIGH));
+              Notification.Builder b=Build.VERSION.SDK_INT>=26?new Notification.Builder(c,"edgevault_reminders"):new Notification.Builder(c);
+              b.setSmallIcon(c.getApplicationInfo().icon).setContentTitle(title).setContentText(body).setAutoCancel(true);
+              nm.notify(i.getIntExtra("nid",1001),b.build());
+            }
+          }'''.replace("PKG",pkg)
+          (java.parent/"ReminderReceiver.java").write_text(receiver)
+          # Inject native bridge and a JS sync that reads the app's own saved db object (the key is discovered, not hardcoded).
+          bridge='''private void scheduleReminder(String id,int hour,int minute,boolean enabled,String title,String body) {
+              android.app.AlarmManager am=(android.app.AlarmManager)getSystemService(ALARM_SERVICE);
+              int nid=1000+Math.abs(id.hashCode()%50000);
+              android.content.Intent i=new android.content.Intent(this, ReminderReceiver.class);
+              i.putExtra("title",title); i.putExtra("body",body); i.putExtra("nid",nid);
+              android.app.PendingIntent pi=android.app.PendingIntent.getBroadcast(this,nid,i,android.app.PendingIntent.FLAG_UPDATE_CURRENT|android.app.PendingIntent.FLAG_IMMUTABLE);
+              am.cancel(pi); if(!enabled)return;
+              java.util.Calendar c=java.util.Calendar.getInstance(); c.set(java.util.Calendar.HOUR_OF_DAY,hour); c.set(java.util.Calendar.MINUTE,minute); c.set(java.util.Calendar.SECOND,0); c.set(java.util.Calendar.MILLISECOND,0);
+              if(c.getTimeInMillis()<=System.currentTimeMillis())c.add(java.util.Calendar.DAY_OF_YEAR,1);
+              if(android.os.Build.VERSION.SDK_INT>=23) {
+                if(android.os.Build.VERSION.SDK_INT<31 || am.canScheduleExactAlarms()) am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP,c.getTimeInMillis(),pi);
+                else am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP,c.getTimeInMillis(),pi);
+              } else am.setExact(android.app.AlarmManager.RTC_WAKEUP,c.getTimeInMillis(),pi);
+          }
+          '''
+          source=source.replace('private WebView webView;', 'private WebView webView;\n'+bridge)
+          # Add bridge after WebView setup; sync app's existing localStorage notification model.
+          source=source.replace('WebSettings s=webView.getSettings();', '''webView.addJavascriptInterface(new Object(){
+                @android.webkit.JavascriptInterface public void schedule(String id,int h,int m,boolean enabled,String title,String body){runOnUiThread(()->scheduleReminder(id,h,m,enabled,title,body));}
+                @android.webkit.JavascriptInterface public void cancelAll(){runOnUiThread(()->{android.app.AlarmManager am=(android.app.AlarmManager)getSystemService(ALARM_SERVICE);});}
+              },"EdgeVaultReminder");
+              WebSettings s=webView.getSettings();''')
+          js='''(function(){
+            try {
+              const titles={asia:["Asia session started","Asia is open. Build your setup for the day, or note a wish or plan. Keep risk small."],ls:["London session started","London is open. Volume is rising, so stay patient and wait for your setup."],lsb:["London Silver Bullet time","The London Silver Bullet window is open now. Look for your setup and stay disciplined."],ny:["New York session started","New York is open. Stay disciplined before entering."],nsb:["New York Silver Bullet time","The New York Silver Bullet window is open now. Look for your setup and stay disciplined."],le:["London session ended","London is closed. Review your trades."],d1:["Data entry reminder 1 of 3","You have not logged any data today. Open EDGEVAULT and add your entry."],d2:["Data entry reminder 2 of 3","Still no data entered today. Log your trades while they are fresh."],d3:["Final data entry reminder","Last reminder: log your data so your journal stays complete."]};
+              let db=null; for(let i=0;i<localStorage.length;i++){try{let x=JSON.parse(localStorage.getItem(localStorage.key(i)));if(x&&x.nt&&x.nt.dt&&x.nt.ev){db=x;break}}catch(e){}}
+              if(!db||!window.EdgeVaultReminder)return;
+              const ids=Object.keys(titles);ids.forEach(id=>{let t=String((db.nt.dt||{})[id]||"09:00").split(":");let h=parseInt(t[0],10),m=parseInt(t[1],10);if(!Number.isFinite(h)||!Number.isFinite(m))return;EdgeVaultReminder.schedule(id,h,m,!!db.nt.on&&!!db.nt.ev[id],titles[id][0],titles[id][1]);});
+            }catch(e){console.log("Reminder sync failed",e)}
+          })();'''
+          # Add receiver declaration and permissions.
+          ms=manifest.read_text()
+          if "ReminderReceiver" not in ms:
+              ms=ms.replace("</application>", '<receiver android:name=".ReminderReceiver" android:enabled="true" android:exported="false" /></application>')
+          if "POST_NOTIFICATIONS" not in ms:
+              ms=ms.replace("<manifest ", '<manifest ')
+              ms=ms.replace("<application", '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/><uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/><application',1)
+          manifest.write_text(ms)
+          # Inject JS sync on every page finish. Native alarms continue when WebView is backgrounded/closed.
+          needle='webView.setWebViewClient(new WebViewClient(){'
+          if needle not in source: raise SystemExit("WebViewClient anchor not found")
+          source=source.replace(needle, 'webView.setWebViewClient(new WebViewClient(){ @Override public void onPageFinished(WebView v,String url){super.onPageFinished(v,url);v.evaluateJavascript('+repr(js)+',null); }')
+          java.write_text(source)
+          print("Added native reminder receiver and existing-HTML notification schedule bridge.")
+          PY
+
       - name: Build release Android App Bundle
         shell: bash
         run: |
