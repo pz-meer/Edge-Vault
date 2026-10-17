@@ -59,9 +59,9 @@ jobs:
           set -euo pipefail
           cd "$PROJECT_DIR"
           if [ "$USE_WRAPPER" = "true" ]; then
-            ./gradlew --no-daemon assembleRelease bundleRelease
+            ./gradlew --no-daemon assembleDebug assembleRelease bundleRelease
           else
-            gradle --no-daemon assembleRelease bundleRelease
+            gradle --no-daemon assembleDebug assembleRelease bundleRelease
           fi
 
       - name: Find generated AAB
@@ -77,11 +77,12 @@ jobs:
           echo "aab_path=$AAB" >> "$GITHUB_OUTPUT"
           echo "AAB generated at: $AAB"
 
-      - name: Upload Android APK and AAB artifacts
+      - name: Upload installable debug APK, release APK and AAB
         uses: actions/upload-artifact@v4
         with:
           name: EdgeVault-Android-Release
           path: |
+            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
             ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
             ${{ steps.find-aab.outputs.aab_path }}
           if-no-files-found: error
