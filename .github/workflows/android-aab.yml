@@ -117,6 +117,8 @@ jobs:
           import android.animation.ObjectAnimator;
           import android.animation.AnimatorSet;
           import com.google.android.gms.ads.*;
+          import com.google.android.gms.ads.interstitial.InterstitialAd;
+          import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
           public class MainActivity extends Activity {
             private static final int FILE_CHOOSER_REQUEST=4107;
             private static final String INTERSTITIAL_ID="ca-app-pub-3940256099942544/1033173712";
