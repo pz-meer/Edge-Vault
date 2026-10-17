@@ -288,41 +288,42 @@ jobs:
           print("Android notification compatibility patch applied to",changed,"HTML file(s)")
           PY
 
-      - name: Ensure visible backup import and restore controls
+      - name: Add visible backup import and restore controls
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
           root=Path("android-source")
           htmls=[p for p in root.rglob("*.html") if "build" not in p.parts]
-          if not htmls:
-              raise SystemExit("No HTML assets found while checking backup/restore controls")
-          checked=0
+          target=None
           for p in htmls:
               s=p.read_text(errors="replace")
-              if "function restore(" not in s and "async function restore(" not in s:
-                  continue
-              checked+=1
-              # The app's Vault backup card should expose a clear restore/import button.
-              if 'data-act="restore"' not in s:
-                  old='<button class="pri" data-act="backup">Download backup</button>'
-                  new=old+'<button data-act="restore">Import / Restore backup</button>'
-                  if old in s:
-                      s=s.replace(old,new,1)
-                      p.write_text(s)
-                      print("Added visible Import / Restore button to",p)
-                  else:
-                      raise SystemExit("Restore logic exists but the Vault backup-card insertion point was not found in "+str(p))
-              # Fail the build rather than shipping a nonfunctional button.
-              if 'data-act="restore"' not in s or 'id="impf"' not in s or "restore(this.files" not in s:
-                  # Older variants may use a change listener with a differently named callback;
-                  # check for both a file input and an event dispatch to restore().
-                  if 'data-act="restore"' not in s or 'id="impf"' not in s or "restore(file" not in s:
-                      raise SystemExit("Backup restore controls or file-input handler missing in "+str(p))
-              print("Verified backup/restore UI and restore parser in",p)
-          if not checked:
-              raise SystemExit("No HTML file containing a restore(file) function was found; refusing to ship without restore support")
+              if re.search(r'async?\\s+function\\s+restore\\s*\\(',s):
+                  target=(p,s)
+                  break
+          if not target:
+              raise SystemExit("No HTML restore(file) implementation found")
+          p,s=target
+          if 'id="impf"' not in s:
+              s=s.replace('</body>', '<input id="impf" type="file" accept=".json,application/json" hidden><script>document.getElementById("impf").addEventListener("change",async function(){const f=this.files&&this.files[0];if(f){try{await restore(f)}catch(e){console.error(e);if(typeof toast==="function")toast("Could not restore this backup.")}finally{this.value=""}}});</script></body>',1)
+          if 'data-act="restore"' not in s:
+              pat=re.compile(r'<button\\b(?=[^>]*data-act=[\\\"\\\']backup[\\\"\\\'])[^>]*>.*?</button>',re.S|re.I)
+              m=pat.search(s)
+              if not m:
+                  raise SystemExit("Could not locate existing backup button in "+str(p))
+              s=s[:m.end()]+ '<button data-act="restore">Import / Restore Backup</button>'+s[m.end():]
+          # Wire the restore button through the app's existing delegated click handler.
+          if "if(a==='restore')" not in s and 'if(a==="restore")' not in s:
+              anchor="const a=D.act;"
+              if anchor not in s:
+                  raise SystemExit("Could not locate delegated app action handler in "+str(p))
+              s=s.replace(anchor, anchor+'if(a===\'restore\'){document.getElementById(\'impf\').click();return}',1)
+          if 'data-act="restore"' not in s or 'id="impf"' not in s or "restore(f)" not in s:
+              raise SystemExit("Backup restore controls failed verification in "+str(p))
+          p.write_text(s)
+          print("Added and verified Import / Restore Backup in",p)
           PY
 
       - name: Build release Android App Bundle
