@@ -136,7 +136,7 @@ jobs:
               rewardButton.setOnClickListener(v->loadRewarded());
               banner=new AdView(this); banner.setAdUnitId("ca-app-pub-3940256099942544/6300978111");
               int width=(int)(getResources().getDisplayMetrics().widthPixels/getResources().getDisplayMetrics().density);
-              banner.setAdSize(AdSize.getLargeAnchoredAdaptiveBannerAdSize(this,width)); root.addView(banner,new LinearLayout.LayoutParams(-1,-2)); banner.loadAd(new AdRequest.Builder().build());
+              banner.setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(this,width)); root.addView(banner,new LinearLayout.LayoutParams(-1,-2)); banner.loadAd(new AdRequest.Builder().build());
               setContentView(root); refreshDailyButton();
               WebSettings s=webView.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setDatabaseEnabled(true); s.setAllowFileAccess(true); s.setAllowContentAccess(true); s.setMediaPlaybackRequiresUserGesture(false); s.setSupportZoom(false); s.setBuiltInZoomControls(false); s.setDisplayZoomControls(false);
               webView.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){Uri u=r.getUrl();String scheme=u.getScheme();if("http".equals(scheme)||"https".equals(scheme)){try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}return true;}return false;}});
