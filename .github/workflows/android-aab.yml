@@ -47,6 +47,19 @@ jobs:
             echo "Gradle wrapper missing; will use installed Gradle."
           fi
 
+      - name: Inspect Android project features before build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== PROJECT FILES ==="
+          find "$PROJECT_DIR" -maxdepth 5 -type f | sort | head -250
+          echo "=== CONFIG AND SOURCE SEARCH ==="
+          grep -RniE --include='*.gradle' --include='*.gradle.kts' --include='AndroidManifest.xml' --include='*.kt' --include='*.java' --include='*.xml' 'firebase|google.signin|google-services|play-services-auth|mobile.ads|admob|test.ad|banner|rewarded|interstitial|WebView|MainActivity|applicationId|namespace' "$PROJECT_DIR" 2>/dev/null | head -300 || true
+          echo "=== MANIFESTS ==="
+          find "$PROJECT_DIR" -name AndroidManifest.xml -type f -print -exec sed -n '1,220p' {} \;
+          echo "=== GRADLE FILES ==="
+          find "$PROJECT_DIR" -maxdepth 3 \( -name 'build.gradle' -o -name 'build.gradle.kts' -o -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -type f -print -exec sed -n '1,220p' {} \;
+
       - name: Set up Gradle
         if: env.USE_WRAPPER == 'false'
         uses: gradle/actions/setup-gradle@v4
