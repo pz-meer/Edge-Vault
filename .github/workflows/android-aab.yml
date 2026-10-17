@@ -126,18 +126,15 @@ jobs:
             private static final String INTERSTITIAL_ID="ca-app-pub-3940256099942544/1033173712";
             private static final long AD_INTERVAL_MS=10L*60L*1000L;
             private WebView webView; private ValueCallback<Uri[]> filePathCallback;
-            private AdView banner; private InterstitialAd interstitialAd;
+            private InterstitialAd interstitialAd;
             private final Handler handler=new Handler(Looper.getMainLooper());
-            private boolean activityVisible=false; private boolean splashFinished=false; private boolean adShowing=false;
+            private boolean activityVisible=false; private boolean splashFinished=false; private boolean adShowing=false; private boolean initialAdPending=true;
             private final Runnable intervalAdRunnable=new Runnable(){@Override public void run(){if(activityVisible&&!isFinishing()&&!isDestroyed())showInterstitialIfReady();handler.postDelayed(this,AD_INTERVAL_MS);}};
             @Override public void onCreate(Bundle state){
               super.onCreate(state);
               MobileAds.initialize(this,status->{});
               LinearLayout content=new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setBackgroundColor(Color.WHITE);
               webView=new WebView(this); content.addView(webView,new LinearLayout.LayoutParams(-1,0,1f));
-              banner=new AdView(this); banner.setAdUnitId("ca-app-pub-3940256099942544/6300978111");
-              int width=(int)(getResources().getDisplayMetrics().widthPixels/getResources().getDisplayMetrics().density);
-              banner.setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(this,width)); content.addView(banner,new LinearLayout.LayoutParams(-1,-2));
               FrameLayout stage=new FrameLayout(this); stage.addView(content,new FrameLayout.LayoutParams(-1,-1));
               FrameLayout splash=new FrameLayout(this);
               GradientDrawable bg=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{Color.rgb(26,103,239),Color.rgb(75,85,225),Color.rgb(119,51,205)});
@@ -153,7 +150,6 @@ jobs:
               ObjectAnimator sx=ObjectAnimator.ofFloat(logo,View.SCALE_X,0.78f,1.04f,1f); sx.setDuration(1050);
               ObjectAnimator sy=ObjectAnimator.ofFloat(logo,View.SCALE_Y,0.78f,1.04f,1f); sy.setDuration(1050);
               AnimatorSet anim=new AnimatorSet(); anim.playTogether(a,sx,sy); anim.setInterpolator(new AccelerateDecelerateInterpolator()); anim.start();
-              banner.loadAd(new AdRequest.Builder().build());
               loadInterstitial();
               WebSettings s=webView.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setDatabaseEnabled(true); s.setAllowFileAccess(true); s.setAllowContentAccess(true); s.setMediaPlaybackRequiresUserGesture(false); s.setSupportZoom(false); s.setBuiltInZoomControls(false); s.setDisplayZoomControls(false);
               webView.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){Uri u=r.getUrl();String scheme=u.getScheme();if("http".equals(scheme)||"https".equals(scheme)){try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}return true;}return false;}});
@@ -162,12 +158,12 @@ jobs:
               handler.postDelayed(()->{splash.animate().alpha(0f).setDuration(350).withEndAction(()->{stage.removeView(splash);splashFinished=true;showInterstitialIfReady();handler.removeCallbacks(intervalAdRunnable);handler.postDelayed(intervalAdRunnable,AD_INTERVAL_MS);if(android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},7101);}).start();},1800);
             }
             private void loadInterstitial(){InterstitialAd.load(this,INTERSTITIAL_ID,new AdRequest.Builder().build(),new InterstitialAdLoadCallback(){
-              @Override public void onAdLoaded(InterstitialAd ad){interstitialAd=ad;showInterstitialIfReady();}
+              @Override public void onAdLoaded(InterstitialAd ad){interstitialAd=ad;if(splashFinished&&initialAdPending)showInterstitialIfReady();}
               @Override public void onAdFailedToLoad(LoadAdError error){interstitialAd=null;handler.postDelayed(()->{if(!isFinishing()&&!isDestroyed())loadInterstitial();},15000L);}
             });}
             private void showInterstitialIfReady(){
               if(!splashFinished||!activityVisible||adShowing||isFinishing()||isDestroyed()||interstitialAd==null)return;
-              InterstitialAd ad=interstitialAd; interstitialAd=null; adShowing=true;
+              InterstitialAd ad=interstitialAd; interstitialAd=null; adShowing=true; initialAdPending=false;
               ad.setFullScreenContentCallback(new FullScreenContentCallback(){
                 @Override public void onAdDismissedFullScreenContent(){adShowing=false;loadInterstitial();}
                 @Override public void onAdFailedToShowFullScreenContent(AdError error){adShowing=false;loadInterstitial();}
@@ -175,11 +171,11 @@ jobs:
               ad.show(this);
             }
             @Override protected void onResume(){super.onResume();activityVisible=true;if(splashFinished)handler.postDelayed(intervalAdRunnable,AD_INTERVAL_MS);}
-            @Override protected void onPause(){activityVisible=false;handler.removeCallbacks(intervalAdRunnable);if(banner!=null)banner.pause();super.onPause();}
+            @Override protected void onPause(){activityVisible=false;handler.removeCallbacks(intervalAdRunnable);super.onPause();}
             @Override protected void onSaveInstanceState(Bundle out){if(webView!=null)webView.saveState(out);super.onSaveInstanceState(out);}
             @Override public void onBackPressed(){if(webView!=null&&webView.canGoBack())webView.goBack();else super.onBackPressed();}
             @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){super.onActivityResult(requestCode,resultCode,data);if(requestCode==FILE_CHOOSER_REQUEST&&filePathCallback!=null){filePathCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode,data));filePathCallback=null;}}
-            @Override protected void onDestroy(){handler.removeCallbacksAndMessages(null);if(banner!=null)banner.destroy();if(filePathCallback!=null){filePathCallback.onReceiveValue(null);filePathCallback=null;}if(webView!=null){webView.destroy();webView=null;}super.onDestroy();}
+            @Override protected void onDestroy(){handler.removeCallbacksAndMessages(null);if(filePathCallback!=null){filePathCallback.onReceiveValue(null);filePathCallback=null;}if(webView!=null){webView.destroy();webView=null;}super.onDestroy();}
           }''')
           print("Configured animated EDGEVAULT launch screen, fullscreen interstitial test ads, banner test ad, and EV-style icon. Removed rewarded-ad button.")
           PY
