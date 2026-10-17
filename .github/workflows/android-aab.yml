@@ -78,9 +78,9 @@ jobs:
           dep="implementation 'com.google.android.gms:play-services-ads:24.6.0'"
           if "play-services-ads" not in s:
               if "dependencies {" in s:
-                  s=s.replace("dependencies {", "dependencies {\\n    "+dep, 1)
+                  s=s.replace("dependencies {", "dependencies {\n    "+dep, 1)
               else:
-                  s += "\\ndependencies {\\n    "+dep+"\\n}\\n"
+                  s += "\ndependencies {\n    "+dep+"\n}\n"
               gradle.write_text(s)
           manifest=next(root.rglob("app/src/main/AndroidManifest.xml"))
           s=manifest.read_text()
