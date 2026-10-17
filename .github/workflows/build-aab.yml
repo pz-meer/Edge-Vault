@@ -1,0 +1,74 @@
+name: Build EDGEVAULT Android AAB
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'EDGEVAULT_Android_Project.zip'
+      - '.github/workflows/build-aab.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Inspect and extract Android project
+        run: |
+          set -eux
+          unzip -l EDGEVAULT_Android_Project.zip | head -200
+          mkdir android-project
+          unzip -q EDGEVAULT_Android_Project.zip -d android-project
+          echo "Extracted project files:"
+          find android-project -maxdepth 4 -type f | head -200
+
+      - name: Locate Gradle project
+        id: locate
+        run: |
+          set -eu
+          GRADLEW="$(find android-project -type f -name gradlew -print -quit)"
+          if [ -z "$GRADLEW" ]; then
+            echo "No gradlew found in the Android project archive."
+            exit 1
+          fi
+          echo "gradlew=$GRADLEW" >> "$GITHUB_OUTPUT"
+          echo "project_dir=$(dirname "$GRADLEW")" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Make Gradle wrapper executable
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: chmod +x ./gradlew
+
+      - name: Build release Android App Bundle
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: ./gradlew --no-daemon bundleRelease
+
+      - name: Find AAB
+        id: aab
+        run: |
+          AAB="$(find android-project -type f -path '*/build/outputs/bundle/release/*.aab' -print -quit)"
+          if [ -z "$AAB" ]; then
+            echo "Release AAB not found."
+            find android-project -type f -path '*/build/outputs/*' -print
+            exit 1
+          fi
+          mkdir -p release
+          cp "$AAB" release/EDGEVAULT-release.aab
+          echo "path=release/EDGEVAULT-release.aab" >> "$GITHUB_OUTPUT"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EDGEVAULT-Android-AAB
+          path: release/EDGEVAULT-release.aab
+          if-no-files-found: error
+          retention-days: 14
